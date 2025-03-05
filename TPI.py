@@ -11,9 +11,11 @@ from airflow.operators.dummy import DummyOperator
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 from airflow.providers.google.cloud.secret_manager.hooks.secret_manager import SecretsManagerHook
 from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
-from airflow.models import DagModel, Variable
+from airflow.models import DagModel, DagBag  # Import DagBag
 from airflow.utils.db import create_session
 from airflow.utils.state import State
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator  # For triggering other DAGs
+
 
 def get_credentials(environment, config):
     """Retrieves credentials (same as before)."""
@@ -62,10 +64,7 @@ def get_scope_id(token, scope_url, headers=None):
         raise Exception(f"Error parsing scope ID response: {e}, Response: {response.text}")
 
 def download_and_upload_zip(token, scope_id, data_url, timestamp, bucket_name, destination_blob_prefix, bq_table, **kwargs):
-    """Downloads, uploads, and logs to BigQuery.
-
-    (Same as before, but uses f-strings for clarity)
-    """
+    """Downloads, uploads, and logs to BigQuery (same)."""
     formatted_timestamp = timestamp.strftime("%Y-%m-%d-%H-%M-%S")
     full_data_url = f"{data_url}?timestamp={formatted_timestamp}"
     destination_blob_name = f"{destination_blob_prefix}/{formatted_timestamp}.zip"
@@ -100,7 +99,7 @@ def download_and_upload_zip(token, scope_id, data_url, timestamp, bucket_name, d
 
 
 def insert_row_bq(bq_table, data_url, timestamp, status, error_message):
-    """Inserts a row into BigQuery (same as before)."""
+    """Inserts a row into BigQuery (same)."""
     insert_job = BigQueryInsertJobOperator(
         task_id=f"insert_bq_log_{timestamp.strftime('%Y%m%d%H%M%S')}",
         configuration={
@@ -136,11 +135,9 @@ def insert_row_bq(bq_table, data_url, timestamp, status, error_message):
     insert_job.execute(context={})
 
 
-def process_data_url(data_url, scope_id, token, bucket_name, destination_blob_prefix, bq_table, dag_run):
-    """Processes a *single* data URL, handling timestamps and retries.
 
-    This function is now specific to a single data URL.
-    """
+def process_data_url(data_url, scope_id, token, bucket_name, destination_blob_prefix, bq_table, dag_run):
+    """Processes a single data URL (same)."""
     last_successful_time = dag_run.get_previous_execution_date(state=State.SUCCESS)
     if last_successful_time is None:
         last_successful_time = dag_run.start_date - timedelta(hours=2)
@@ -167,9 +164,8 @@ def process_data_url(data_url, scope_id, token, bucket_name, destination_blob_pr
         )
 
 
-
 def get_failed_timestamps(bq_table, data_url, start_time, end_time):
-    """Retrieves failed timestamps (same as before)."""
+    """Retrieves failed timestamps (same)."""
     from google.cloud import bigquery
 
     client = bigquery.Client()
@@ -194,12 +190,13 @@ def get_failed_timestamps(bq_table, data_url, start_time, end_time):
 
 
 
-def create_dag(dag_config):
-    """Creates a DAG dynamically for a *single* data URL."""
+
+def create_data_dag(dag_config):
+    """Creates a DAG dynamically for a *single* data URL (same, but renamed)."""
 
     dag_id = dag_config['dag_id']
     environment = dag_config['environment']
-    data_url = dag_config['data_url']  # Single data URL
+    data_url = dag_config['data_url']
 
     with create_session() as session:
         dag_exists = session.query(DagModel).filter(DagModel.dag_id == dag_id).first()
@@ -244,11 +241,12 @@ def create_dag(dag_config):
             provide_context=True,
             op_kwargs_from_xcom={'token': "{{ ti.xcom_pull(task_ids='get_token') }}"},
         )
+
         process_data_task = PythonOperator(
-            task_id="process_data_url",  # Singular, as it's for one URL
+            task_id="process_data_url",
             python_callable=process_data_url,
             op_kwargs={
-                "data_url": data_url,  # Pass the single data URL
+                "data_url": data_url,
                 "bucket_name": dag_config['gcs_bucket'],
                 "destination_blob_prefix": dag_config['destination_blob_name'],
                 "bq_table": dag_config['bigquery_table'],
@@ -265,45 +263,79 @@ def create_dag(dag_config):
     return dag
 
 
-def create_dags_from_config(config_folder):
-    """Creates DAGs from *multiple* config files, one DAG per config."""
+
+def create_and_deploy_dags(config_folder, **kwargs):
+    """Creates and deploys DAGs based on config files, then triggers them."""
+    dagbag = DagBag(include_examples=False)  # Create an empty DagBag
+
     for filename in os.listdir(config_folder):
         if filename.endswith(".json"):
             config_path = os.path.join(config_folder, filename)
             try:
                 with open(config_path, "r") as f:
                     config = json.load(f)
-                # Iterate through data_url_configs, creating a DAG for each
-                for data_url_config in config['data_url_configs']:
-                    # Create a unique DAG ID based on the data URL
-                    dag_id = f"{config['base_dag_id']}_{data_url_config['name']}"
 
-                    # Combine base config with data URL specific config
+                for data_url_config in config['data_url_configs']:
+                    dag_id = f"{config['base_dag_id']}_{data_url_config['name']}"
                     dag_config = {
                         "dag_id": dag_id,
                         "environment": config['environment'],
                         "schedule_interval": config.get('schedule_interval', '@hourly'),
                         "start_date": config.get('start_date', '2023-10-26'),
                         "catchup": config.get('catchup', False),
-                        "tags": config.get('tags', []) + [data_url_config['name']], # Add data URL name as tag
+                        "tags": config.get('tags', []) + [data_url_config['name']],
                         "default_args": config.get('default_args', {}),
                         "api_credentials": config['api_credentials'],
                         "api_endpoints": config['api_endpoints'],
-                        "data_url": data_url_config['url'],  # The specific data URL
+                        "data_url": data_url_config['url'],
                         "gcs_bucket": config['gcs_bucket'],
                         "destination_blob_name": data_url_config.get('destination_blob_name', config['destination_blob_name']),
                         "bigquery_table": config['bigquery_table'],
                     }
-                    dag = create_dag(dag_config)
-                    if dag:
-                        globals()[dag.dag_id] = dag
-                        print(f"DAG '{dag.dag_id}' created successfully from {filename}.")
+
+                    # Check if DAG exists *before* creating it.
+                    with create_session() as session:
+                        dag_exists = session.query(DagModel).filter(DagModel.dag_id == dag_id).first()
+                    if not dag_exists:
+                        dag = create_data_dag(dag_config)  # Use the renamed function
+                        if dag:
+                            dagbag.dags[dag_id] = dag # Add the DAG to the DagBag
+                            globals()[dag_id] = dag
+                            print(f"DAG '{dag_id}' created successfully from {filename}.")
+
+                            # Trigger the newly created DAG *immediately*
+                            trigger_dag = TriggerDagRunOperator(
+                                task_id=f"trigger_{dag_id}",
+                                trigger_dag_id=dag_id,  # The DAG to trigger
+                                wait_for_completion=False,  # Don't wait
+                                execution_date="{{ execution_date }}", #important for passing context
+                                reset_dag_run = True,
+                            )
+                            trigger_dag.execute(context=kwargs)
+
+                    else:
+                        print(f"DAG '{dag_id}' already exists. Skipping creation and trigger.")
+
 
             except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
                 print(f"Error processing config file {filename}: {e}")
             except Exception as e:
                 print(f"Unexpected error creating DAG from {filename}: {e}")
 
-if __name__ == "__main__":
-    config_folder = "config"
-    create_dags_from_config(config_folder)
+
+
+# --- Main DAG that creates and triggers the data DAGs ---
+with DAG(
+    dag_id="dag_creator",
+    schedule_interval=None,  # Or set a schedule if you want it to run periodically
+    start_date=datetime(2023, 11, 16),
+    catchup=False,
+    tags=['dag_management'],
+) as dag_creator:
+
+    create_dags_task = PythonOperator(
+        task_id="create_and_deploy_dags",
+        python_callable=create_and_deploy_dags,
+        op_kwargs={"config_folder": "config"},
+        provide_context=True, # provide context for execution date
+    )
