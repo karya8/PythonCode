@@ -1,0 +1,36 @@
+{
+    "base_dag_id": "my_staging_pipeline",
+    "environment": "staging",
+    "schedule_interval": "@hourly",
+    "start_date": "2023-11-16",
+    "catchup": false,
+    "tags": ["api", "data_extraction", "staging"],
+    "default_args": {
+      "owner": "airflow",
+      "retries": 3,
+      "retry_delay": 60
+    },
+    "api_credentials": {
+      "project_id": "your-staging-gcp-project",
+      "client_id": "YOUR_STAGING_CLIENT_ID",
+      "client_secret": "YOUR_STAGING_CLIENT_SECRET"
+    },
+    "api_endpoints": {
+      "auth_url": "https://your-auth-api.com/token",
+      "scope_url": "https://your-api.com/scope"
+    },
+    "gcs_bucket": "your-staging-gcs-bucket",
+    "destination_blob_name": "staging_data_extracts",
+    "bigquery_table": "your-staging-project.your_staging_dataset.your_staging_table",
+    "data_url_configs": [
+      {
+        "name": "data1",
+        "url": "https://your-api.com/data1"
+      },
+      {
+        "name": "data2",
+        "url": "https://your-api.com/data2",
+         "destination_blob_name": "data2_staging_extract"
+      }
+    ]
+  }
