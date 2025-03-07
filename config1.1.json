@@ -1,0 +1,26 @@
+{
+    "environment": "development",
+    "api_credentials": {
+      "project_id": "your-gcp-project-id",
+      "client_id": "YOUR_CLIENT_ID",
+      "client_secret": "YOUR_CLIENT_SECRET"
+    },
+    "api_endpoints": {
+      "auth_url": "https://your-auth-api.com/token",
+      "scope_url": "https://your-api.com/scope"
+    },
+    "gcs_bucket": "your-gcs-bucket-name",
+    "bigquery_table": "your-project.your_dataset.your_failed_attempts_table",
+    "data_urls": [
+      {
+        "name": "data1",
+        "url": "https://your-api.com/data1",
+        "destination_blob_prefix": "data1_extracts"
+      },
+      {
+        "name": "data2",
+        "url": "https://your-api.com/data2",
+        "destination_blob_prefix": "data2_extracts"
+      }
+    ]
+  }
