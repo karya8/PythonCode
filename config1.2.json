@@ -1,0 +1,41 @@
+{
+  "environment": "development",
+  "api_credentials": {
+      "project_id": "gcp-project-id",
+      "client_id": "client-id",
+      "client_secret": "client-secret",
+      "secret_manager_client_id": "secret-manager-client-id",
+      "secret_manager_client_secret": "secret-manager-client-secret"
+  },
+  "api_endpoints": {
+    "auth_url": "auth-url",
+    "scope_url": "scope-url"
+  },
+  "gcs_bucket": "bucket-name",
+  "bigquery_table": "project.dataset.table",
+  "owner": "Data Team",
+  "depends_on_past": false,
+  "start_date": "2023-11-15T00:00:00",
+  "email": [],
+  "email_on_failure": false,
+  "email_on_retry": false,
+  "retries": 1,
+  "retry_delay_minutes": 5,
+  "schedule_interval": "@daily",
+  "catchup": false,
+  "tags": ["dynamic_dags"],
+    "max_active_runs": 1,
+  "data_urls": [
+    {
+      "name": "data_url_1",
+      "url": "url_1"
+
+    },
+    {
+      "name": "data_url_2",
+      "url": "url_2",
+      "destination_blob_prefix": "prefix_for_data_url_2"
+    }
+
+  ]
+}
