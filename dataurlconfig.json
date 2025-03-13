@@ -1,0 +1,17 @@
+{
+  "name": "data_source_2",
+  "url": "your-data-url-2",
+  "destination_blob_prefix": "data_source_2",
+  "owner": "data_source_2_owner",
+  "depends_on_past": true,
+  "start_date": "2023-11-15T00:00:00",
+  "email": ["data_source_2_email@example.com"],
+  "email_on_failure": false,
+  "email_on_retry": true,
+  "retries": 1,
+  "retry_delay_minutes": 5,
+  "schedule_interval": "0 * * * *",
+  "catchup": true,
+  "tags": ["data_source_2_tag"],
+  "max_active_runs": 2
+}
