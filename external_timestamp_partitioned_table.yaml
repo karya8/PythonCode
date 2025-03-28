@@ -1,0 +1,17 @@
+table_id: external_timestamp_partitioned_table
+table_type: external
+external_data_configuration:
+  sourceFormat: CSV
+  sourceUris:
+    - gs://your-bucket/external_data/*.csv
+  csvOptions:
+    fieldDelimiter: ","
+schema_fields:
+  - name: event_time
+    type: TIMESTAMP
+  - name: data
+    type: STRING
+time_partitioning:
+  type: DAY
+  expirationMs: 15778800000 # 6 months (milliseconds)
+partitioning_field: event_time
