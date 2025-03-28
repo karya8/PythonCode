@@ -1,0 +1,13 @@
+table_id: partitioned_native_table
+table_type: native
+schema_fields:
+  - name: transaction_date
+    type: DATE
+  - name: product_id
+    type: INTEGER
+  - name: amount
+    type: FLOAT
+time_partitioning:
+  type: DAY
+  expirationMs: 2592000000 # 30 days in milliseconds
+partitioning_field: transaction_date
