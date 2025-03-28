@@ -24,7 +24,7 @@ master_config = load_master_config()
 STORAGE_BUCKET = master_config.get("storage_bucket")
 DAGS_BUCKET_PATH = master_config.get("dags_bucket_path", "dags")
 MASTER_DAG_FILE_NAME = master_config.get("master_dag_file_name", "master_dag_file.py")
-CONFIG_DIR = master_config.get("config_dir","config")
+CONFIG_DIR = master_config.get("config_dir", "config")
 
 def download_and_unzip(zip_file_path, processing_folder):
     """Downloads a zip file from the storage bucket and unzips it."""
@@ -41,12 +41,22 @@ def download_and_unzip(zip_file_path, processing_folder):
 
     return local_zip_path
 
-def process_csv(csv_file_name, header_file_name, processing_folder, zip_file_path):
+def process_csv(processing_folder, header_file_name, zip_file_path, success_folder, error_folder):
     """Reads the first line of the CSV and compares it with a header file."""
-    csv_file_path = os.path.join(processing_folder, csv_file_name)
     header_file_path = os.path.join(CONFIG_DIR, header_file_name)
 
     try:
+        csv_files = [f for f in os.listdir(processing_folder) if f.endswith(".csv")]
+
+        if not csv_files:
+            print("No CSV files found in the processing folder.")
+            os.makedirs(error_folder, exist_ok=True)
+            shutil.move(zip_file_path, os.path.join(error_folder, os.path.basename(zip_file_path)))
+            return
+
+        csv_file_name = csv_files[0]  # Assuming only one CSV file per zip
+        csv_file_path = os.path.join(processing_folder, csv_file_name)
+
         with open(csv_file_path, "r") as csvfile:
             reader = csv.reader(csvfile)
             first_row = next(reader)
@@ -55,24 +65,24 @@ def process_csv(csv_file_name, header_file_name, processing_folder, zip_file_pat
             header_row = next(csv.reader(headerfile))
 
         if first_row == header_row:
-            os.makedirs("success", exist_ok=True)
-            shutil.move(csv_file_path, os.path.join("success", csv_file_name))
-            shutil.move(zip_file_path, os.path.join("success", os.path.basename(zip_file_path)))
-            print(f"Header match! Moved {csv_file_name} and zip to success.")
+            os.makedirs(success_folder, exist_ok=True)
+            shutil.move(csv_file_path, os.path.join(success_folder, csv_file_name))
+            shutil.move(zip_file_path, os.path.join(success_folder, os.path.basename(zip_file_path)))
+            print(f"Header match! Moved {csv_file_name} and zip to {success_folder}.")
         else:
-            os.makedirs("error", exist_ok=True)
+            os.makedirs(error_folder, exist_ok=True)
             os.remove(csv_file_path)
-            shutil.move(zip_file_path, os.path.join("error", os.path.basename(zip_file_path)))
-            print(f"Header mismatch! Moved zip to error and deleted {csv_file_name}.")
+            shutil.move(zip_file_path, os.path.join(error_folder, os.path.basename(zip_file_path)))
+            print(f"Header mismatch! Moved zip to {error_folder} and deleted {csv_file_name}.")
 
     except FileNotFoundError as e:
         print(f"File not found: {e}")
-        os.makedirs("error", exist_ok=True)
-        shutil.move(zip_file_path, os.path.join("error", os.path.basename(zip_file_path)))
+        os.makedirs(error_folder, exist_ok=True)
+        shutil.move(zip_file_path, os.path.join(error_folder, os.path.basename(zip_file_path)))
     except Exception as e:
         print(f"An error occurred: {e}")
-        os.makedirs("error", exist_ok=True)
-        shutil.move(zip_file_path, os.path.join("error", os.path.basename(zip_file_path)))
+        os.makedirs(error_folder, exist_ok=True)
+        shutil.move(zip_file_path, os.path.join(error_folder, os.path.basename(zip_file_path)))
 
 def create_dynamic_dag_file_and_upload(dag_id, dag_config):
     """Creates a Python file for a dynamic DAG and uploads it to storage."""
@@ -86,6 +96,8 @@ from airflow.models import Variable
 
 STORAGE_BUCKET = Variable.get("storage_bucket")
 PROCESSING_FOLDER = "processing"
+SUCCESS_FOLDER = "{dag_config.get('success_folder', 'success')}"
+ERROR_FOLDER = "{dag_config.get('error_folder', 'error')}"
 
 with DAG(
     dag_id="{dag_id}",
@@ -99,7 +111,7 @@ with DAG(
 
     def process(**context):
         zip_file_path = context['ti'].xcom_pull(task_ids='download_zip')
-        process_csv("{dag_config['csv_file_name']}", "{dag_config['header_file_name']}", PROCESSING_FOLDER, zip_file_path)
+        process_csv(PROCESSING_FOLDER, "{dag_config['header_file_name']}", zip_file_path, SUCCESS_FOLDER, ERROR_FOLDER)
 
     download_task = PythonOperator(
         task_id="download_zip",
