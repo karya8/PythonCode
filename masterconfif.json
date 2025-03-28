@@ -1,0 +1,17 @@
+{
+  "environment": "development",
+  "api_credentials": {
+    "project_id": "your-gcp-project-id",
+    "client_id": "your-api-client-id",
+    "client_secret": "your-api-client-secret",
+    "secret_manager_client_id": "your-secret-manager-client-id-secret-name",
+    "secret_manager_client_secret": "your-secret-manager-client-secret-name"
+  },
+  "api_endpoints": {
+    "auth_url": "your-auth-url",
+    "scope_url": "your-scope-url"
+  },
+  "gcs_bucket": "your-data-upload-bucket",
+  "bigquery_table": "your-project.your_dataset.your_table",
+  "combined_configs_dir": "combined_configs"
+}
