@@ -1,10 +1,11 @@
 from airflow import DAG
 from airflow.providers.google.cloud.operators.bigquery import BigQueryCreateExternalTableOperator, BigQueryCreateEmptyTableOperator
+from airflow.operators.dummy import DummyOperator
 from airflow.utils.dates import days_ago
-from airflow.models import Variable
 import yaml
 import os
 from google.cloud import bigquery
+import json
 
 def parse_yaml_table_definition(yaml_file_path):
     """Parses YAML table definition and returns table details."""
@@ -12,8 +13,17 @@ def parse_yaml_table_definition(yaml_file_path):
         table_details = yaml.safe_load(file)
     return table_details
 
-def create_table_tasks(dag, project_id, dataset_id, config_folder, table_prefix):
-    """Creates Airflow tasks to create BigQuery tables, checking existence inline."""
+def create_table_tasks(dag, config_file_path):
+    """Creates Airflow tasks to create BigQuery tables, checking existence inline. Reads all configs from file"""
+
+    with open(config_file_path, 'r') as file:
+        dag_config = json.load(file)
+
+    project_id = dag_config.get("project_id")
+    dataset_id = dag_config.get("dataset_id")
+    config_folder = dag_config.get("config_folder")
+    table_prefix = dag_config.get("table_prefix")
+
     tasks = []
     for filename in os.listdir(config_folder):
         if filename.endswith('.yaml') and filename.startswith(table_prefix):
@@ -66,13 +76,8 @@ def create_table_tasks(dag, project_id, dataset_id, config_folder, table_prefix)
 
     return tasks
 
-# Retrieve configuration from Airflow Variables.
-dag_config = Variable.get("dag_config", default_var='{"project_id": "your-project-id", "dataset_id": "your_dataset", "config_folder": "/path/to/your/yaml/files", "table_prefix": "table_"}')
-dag_config = json.loads(dag_config)
-project_id = dag_config.get("project_id")
-dataset_id = dag_config.get("dataset_id")
-config_folder = dag_config.get("config_folder")
-table_prefix = dag_config.get("table_prefix")
+# Retrieve configuration from config JSON file.
+config_file_path = "/path/to/your/dag_config.json"  # Replace with your actual config file path
 
 with DAG(
     dag_id='bigquery_table_creation',
@@ -81,4 +86,13 @@ with DAG(
     catchup=False,
     tags=['bigquery', 'table_creation'],
 ) as dag:
-    table_tasks = create_table_tasks(dag, project_id, dataset_id, config_folder, table_prefix)
+    table_tasks = create_table_tasks(dag, config_file_path)
+
+    end_task = DummyOperator(
+        task_id='all_tables_created',
+        dag=dag,
+    )
+
+    if table_tasks:
+        for task in table_tasks:
+            task >> end_task
