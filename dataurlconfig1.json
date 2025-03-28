@@ -1,0 +1,21 @@
+{
+  "data_url_config": {
+    "name": "data_url_1",
+    "url": "your-data-url-1",
+    "destination_blob_prefix": "data_url_1"
+  },
+  "dag_config": {
+    "owner": "your_name",
+    "depends_on_past": false,
+    "start_date": "2023-11-01T00:00:00",
+    "email": [],
+    "email_on_failure": false,
+    "email_on_retry": false,
+    "retries": 1,
+    "retry_delay_minutes": 5,
+    "schedule_interval": "@hourly",
+    "catchup": false,
+    "tags": ["data_pipeline"],
+    "max_active_runs": 1
+  }
+}
