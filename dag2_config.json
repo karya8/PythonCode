@@ -1,0 +1,10 @@
+# dag_configs/dag2_config.json
+{
+  "dag_id": "dag2_transform_data",
+  "schedule_interval": "0 12 * * *",
+  "start_date": "2024, 1, 1",
+  "zip_file_path": "data/data2.zip",
+  "header_file_name": "header2.csv",
+  "success_folder": "data2_processed",
+  "error_folder": "data2_failed"
+}
