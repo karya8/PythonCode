@@ -1,0 +1,21 @@
+table_id: external_separate_attrs
+table_type: external
+tableReference:
+  projectId: your-gcp-project-id
+  datasetId: your_dataset
+externalDataConfiguration:
+  sourceFormat: CSV
+  sourceUris:
+    - gs://your-bucket/external_data/*.csv
+  csvOptions:
+    fieldDelimiter: ","
+schema:
+  fields:
+    - name: event_time
+      type: TIMESTAMP
+    - name: data
+      type: STRING
+timePartitioning:
+  type: DAY
+  expirationMs: 15778800000 # 6 months (milliseconds)
+  field: event_time
