@@ -16,3 +16,14 @@
         create_disposition="CREATE_IF_NEEDED",  # Or "CREATE_ALWAYS"
         write_disposition="WRITE_TRUNCATE", # Or WRITE_APPEND, WRITE_EMPTY
     )
+
+
+# Task to delete the external BigQuery table (if it exists)
+    delete_external_table_task = BigQueryDeleteTableOperator(
+        task_id="delete_external_table",
+        project_id=PROJECT_ID,
+        dataset_id=DATASET_ID,
+        table_id=TABLE_ID,
+        gcp_conn_id=gcp_conn_id,
+        ignore_if_not_found=True,
+    
