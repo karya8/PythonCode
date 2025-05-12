@@ -13,9 +13,10 @@ from airflow.decorators import dag, task
 from airflow.providers.google.cloud.operators.bigquery import BigQueryExecuteQueryOperator
 from airflow.utils.trigger_rule import TriggerRule
 
-BQ_TABLE = "{{ dag_run.conf.bigquery_table }}"
-BQ_DATASET = "{{ dag_run.conf.bigquery_dataset }}"
-BQ_PROJECT = "{{ dag_run.conf.bigquery_project }}"
+# BigQuery details and retry settings will now be read from main_config.json
+BQ_TABLE = "{{ var.value.bigquery_table }}"  # Can also keep as template if preferred
+BQ_DATASET = "{{ var.value.bigquery_dataset }}"  # Can also keep as template if preferred
+BQ_PROJECT = "{{ var.value.bigquery_project }}"  # Can also keep as template if preferred
 
 
 def _round_down_to_nearest_five(minute: int) -> int:
@@ -24,13 +25,12 @@ def _round_down_to_nearest_five(minute: int) -> int:
 
 
 @task
-def read_main_config(main_config_file: str) -> dict[str, str]:
+def read_main_config(main_config_file: str) -> dict[str, Any]:
     """Reads the main configuration from a JSON file."""
     config_file_path = os.path.join(os.path.dirname(__file__), main_config_file)
     with open(config_file_path, "r") as f:
         config_data = json.load(f)
-    return {"config_folder": config_data.get("config_folder", "config"),
-            "archive_folder": config_data.get("archive_folder", "archive")}
+    return config_data
 
 
 @task
@@ -125,13 +125,28 @@ def archive_load_request(load_request_file_path: str, archive_base_path: str):
     catchup=False,
     tags=["timestamp_processing"],
     default_args={
-        "retries": "{{ dag_run.conf.retries | int }}",
-        "retry_delay": datetime.timedelta(minutes=5),
+        "retries": None,  # Will be read from config
+        "retry_delay": None,  # Will be read from config
     },
 )
 def timestamp_processing_dag():
     main_config_task = read_main_config(main_config_file="config/main_config.json")
     load_request_files = read_load_requests(config_base_path=main_config_task["config_folder"])
+
+    # Set default_args here, after reading the config
+    dag_kwargs = {
+        "default_args": {
+            "retries": main_config_task["retries"],
+            "retry_delay": datetime.timedelta(minutes=main_config_task["retry_delay_minutes"]) if main_config_task.get("retry_delay_minutes") else None,
+        }
+    }
+    dag.update_args(dag_kwargs)
+
+    # Update global BigQuery variables (optional, if you prefer using Airflow Variables)
+    global BQ_PROJECT, BQ_DATASET, BQ_TABLE
+    BQ_PROJECT = main_config_task.get("bigquery_project") or BQ_PROJECT
+    BQ_DATASET = main_config_task.get("bigquery_dataset") or BQ_DATASET
+    BQ_TABLE = main_config_task.get("bigquery_table") or BQ_TABLE
 
     process_tasks = []
     for load_request_file_path in load_request_files:
@@ -153,7 +168,7 @@ def timestamp_processing_dag():
         process_bq.set_upstream(generated_timestamps)
         archive_task.set_upstream(process_bq)
 
-        process_tasks.append(archive_task)  # Optionally keep track of the final tasks
+        process_tasks.append(archive_task)
 
 
 timestamp_processing_dag()
