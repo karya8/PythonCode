@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 import pendulum
+import yaml
 import json
 import shutil
 
@@ -13,10 +14,9 @@ from airflow.decorators import dag, task
 from airflow.providers.google.cloud.operators.bigquery import BigQueryExecuteQueryOperator
 from airflow.utils.trigger_rule import TriggerRule
 
-# BigQuery details and retry settings will now be read from main_config.json
-BQ_TABLE = "{{ var.value.bigquery_table }}"  # Can also keep as template if preferred
-BQ_DATASET = "{{ var.value.bigquery_dataset }}"  # Can also keep as template if preferred
-BQ_PROJECT = "{{ var.value.bigquery_project }}"  # Can also keep as template if preferred
+BQ_TABLE = "{{ dag_run.conf.bigquery_table }}"
+BQ_DATASET = "{{ dag_run.conf.bigquery_dataset }}"
+BQ_PROJECT = "{{ dag_run.conf.bigquery_project }}"
 
 
 def _round_down_to_nearest_five(minute: int) -> int:
@@ -34,21 +34,12 @@ def read_main_config(main_config_file: str) -> dict[str, Any]:
 
 
 @task
-def read_load_requests(config_base_path: str) -> list[str]:
-    """Reads all load request files from the specified config folder."""
-    config_folder = os.path.join(os.path.dirname(__file__), config_base_path)
-    load_request_files = [
-        f for f in os.listdir(config_folder) if f.endswith((".yaml", ".yml", ".json"))
-    ]
-    return [os.path.join(config_folder, lrf) for lrf in load_request_files]
-
-
-@task
-def read_load_request(load_request_file_path: str) -> dict[str, Any]:
-    """Reads a single load request file."""
-    with open(load_request_file_path, "r") as f:
-        config_data = json.load(f) if load_request_file_path.endswith(".json") else yaml.safe_load(f)
-    return config_data
+def read_load_requests_file(config_base_path: str, load_requests_file: str) -> list[dict[str, Any]]:
+    """Reads the YAML file containing a list of load requests."""
+    config_file_path = os.path.join(os.path.dirname(__file__), config_base_path, load_requests_file)
+    with open(config_file_path, "r") as f:
+        load_requests_data = yaml.safe_load(f)
+    return load_requests_data.get("load_requests", [])
 
 
 @task
@@ -71,12 +62,12 @@ def generate_timestamps(load_request: dict[str, Any]) -> list[str]:
 
 
 @task
-def process_timestamps_bq(schema_name: str, timestamps: list[str], load_strategy: str):
+def process_timestamps_bq(schema_name: str, timestamps: list[str], load_strategy: str, bq_project: str, bq_dataset: str, bq_table: str):
     """Inserts or updates timestamps in BigQuery."""
     from google.cloud import bigquery
 
-    client = bigquery.Client(project=BQ_PROJECT)
-    table_id = f"{BQ_PROJECT}.{BQ_DATASET}.{BQ_TABLE}"
+    client = bigquery.Client(project=bq_project)
+    table_id = f"{bq_project}.{bq_dataset}.{bq_table}"
 
     for ts in timestamps:
         query = f"""
@@ -108,14 +99,14 @@ def process_timestamps_bq(schema_name: str, timestamps: list[str], load_strategy
 
 
 @task(trigger_rule=TriggerRule.ALL_SUCCESS)
-def archive_load_request(load_request_file_path: str, archive_base_path: str):
-    """Moves the processed load request file to the specified archive folder."""
-    load_request_file_name = os.path.basename(load_request_file_path)
+def archive_load_requests_file(config_base_path: str, load_requests_file: str, archive_base_path: str):
+    """Moves the processed load requests file to the specified archive folder."""
+    source_path = os.path.join(os.path.dirname(__file__), config_base_path, load_requests_file)
     archive_folder = os.path.join(os.path.dirname(__file__), archive_base_path)
-    destination_path = os.path.join(archive_folder, load_request_file_name)
+    destination_path = os.path.join(archive_folder, load_requests_file)
     os.makedirs(archive_folder, exist_ok=True)
-    shutil.move(load_request_file_path, destination_path)
-    logging.info(f"Moved load request file '{load_request_file_name}' to '{archive_folder}'")
+    shutil.move(source_path, destination_path)
+    logging.info(f"Moved load requests file '{load_requests_file}' to '{archive_folder}'")
 
 
 @dag(
@@ -131,44 +122,77 @@ def archive_load_request(load_request_file_path: str, archive_base_path: str):
 )
 def timestamp_processing_dag():
     main_config_task = read_main_config(main_config_file="config/main_config.json")
-    load_request_files = read_load_requests(config_base_path=main_config_task["config_folder"])
+    load_requests = read_load_requests_file(
+        config_base_path=main_config_task["config_folder"],
+        load_requests_file=main_config_task["load_requests_file"],
+    )
 
     # Set default_args here, after reading the config
     dag_kwargs = {
         "default_args": {
-            "retries": main_config_task["retries"],
-            "retry_delay": datetime.timedelta(minutes=main_config_task["retry_delay_minutes"]) if main_config_task.get("retry_delay_minutes") else None,
+            "retries": main_config_task.get("retries"),
+            "retry_delay": datetime.timedelta(minutes=main_config_task.get("retry_delay_minutes")) if main_config_task.get("retry_delay_minutes") else None,
         }
     }
     dag.update_args(dag_kwargs)
 
-    # Update global BigQuery variables (optional, if you prefer using Airflow Variables)
-    global BQ_PROJECT, BQ_DATASET, BQ_TABLE
-    BQ_PROJECT = main_config_task.get("bigquery_project") or BQ_PROJECT
-    BQ_DATASET = main_config_task.get("bigquery_dataset") or BQ_DATASET
-    BQ_TABLE = main_config_task.get("bigquery_table") or BQ_TABLE
-
     process_tasks = []
-    for load_request_file_path in load_request_files:
-        load_request = read_load_request.override(task_id=f"read_{os.path.basename(load_request_file_path).replace('.', '_')}")(load_request_file_path=load_request_file_path)
-        generated_timestamps = generate_timestamps.override(task_id=f"generate_ts_{os.path.basename(load_request_file_path).replace('.', '_')}")(load_request=load_request)
-        process_bq = process_timestamps_bq.override(task_id=f"process_bq_{load_request['schema_name']}")(
-            schema_name=load_request["schema_name"],
-            timestamps=generated_timestamps,
+    for index, load_request in enumerate(load_requests):
+        schema_name = load_request["schema_name"]
+        generate_ts = generate_timestamps.override(task_id=f"generate_ts_{schema_name}")(load_request=load_request)
+        process_bq = process_timestamps_bq.override(task_id=f"process_bq_{schema_name}")(
+            schema_name=schema_name,
+            timestamps=generate_ts,
             load_strategy=load_request["load_strategy"],
+            bq_project=main_config_task.get("bigquery_project"),
+            bq_dataset=main_config_task.get("bigquery_dataset"),
+            bq_table=main_config_task.get("bigquery_table"),
         )
-        archive_task = archive_load_request.override(task_id=f"archive_{os.path.basename(load_request_file_path).replace('.', '_')}")(
-            load_request_file_path=load_request_file_path,
-            archive_base_path=main_config_task["archive_folder"],
-        )
+        process_tasks.append(process_bq)
 
-        # Define the sequential order of tasks for each load request
-        load_request.set_upstream(main_config_task)
-        generated_timestamps.set_upstream(load_request)
-        process_bq.set_upstream(generated_timestamps)
-        archive_task.set_upstream(process_bq)
+        # Set dependencies to run sequentially
+        if index > 0:
+            generate_ts.set_upstream(process_tasks[index - 1])
+        else:
+            generate_ts.set_upstream(read_load_requests_file)
 
-        process_tasks.append(archive_task)
+    archive_task = archive_load_requests_file.override(task_id="archive_load_requests")(
+        config_base_path=main_config_task["config_folder"],
+        load_requests_file=main_config_task["load_requests_file"],
+        archive_base_path=main_config_task["archive_folder"],
+    )
+    archive_task.set_upstream(process_tasks[-1]) if process_tasks else archive_task.set_upstream(read_load_requests_file)
 
 
 timestamp_processing_dag()
+
+
+
+config json file
+{
+  "config_folder": "config_files",
+  "archive_folder": "processed_config_files",
+  "load_requests_file": "load_requests.yaml",
+  "bigquery_project": "your-gcp-project-id",
+  "bigquery_dataset": "your_dataset_name",
+  "bigquery_table": "your_table_name",
+  "retries": 3,
+  "retry_delay_minutes": 5
+}
+
+load_requests:
+  - schema_name: schema_a
+    start_timestamp: "2025-05-12T09:00:00"
+    end_timestamp: "2025-05-12T10:00:00"
+    load_strategy: overwrite
+    comments: "Initial load for schema A"
+  - schema_name: schema_b
+    start_timestamp: "2025-05-12T10:05:00"
+    end_timestamp: "2025-05-12T10:15:00"
+    load_strategy: append
+    comments: "Adding more data for schema B"
+  - schema_name: schema_c
+    start_timestamp: "2025-05-12T11:00:00"
+    end_timestamp: "2025-05-12T11:30:00"
+    load_strategy: overwrite
+    comments: "Another load for schema C"
