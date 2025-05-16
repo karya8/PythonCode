@@ -137,6 +137,26 @@ with DAG(
     catchup=False,  # Do not backfill
     tags=['bigquery', 'sql', 'dynamic'],
 ) as dag:
+    def create_execution_tasks():
+        sql_files = list_and_sort_sql_files(SQL_FILES_PATH, FILE_ORDERING)
+        execute_tasks = []
+        for sql_file in sql_files:
+            execute_task = PythonOperator(
+                task_id=f'execute_sql_{sql_file.replace(".", "_")}',
+                python_callable=execute_sql_file,
+                op_kwargs={
+                    'sql_file_name': sql_file,
+                    'sql_files_path': SQL_FILES_PATH,
+                    'archive_path': ARCHIVE_PATH,
+                    'project_id': PROJECT_ID,  # Added
+                    'dataset_name': DATASET_NAME,  # Added
+                    'delimiter': SQL_STATEMENT_DELIMITER,
+                },
+                provide_context=True,  # Add this if you need to access Airflow context.
+            )
+            execute_tasks.append(execute_task)
+        return execute_tasks
+
     get_sql_files = PythonOperator(
         task_id='get_sql_files',
         python_callable=list_and_sort_sql_files,
@@ -144,37 +164,8 @@ with DAG(
         provide_context=True,  # Add this if you need to access Airflow context.
     )
 
-    # Use a list to hold the execute tasks
-    execute_tasks = []
-    for sql_file in list_and_sort_sql_files(SQL_FILES_PATH, FILE_ORDERING):
-        execute_task = PythonOperator(
-            task_id=f'execute_sql_{sql_file.replace(".", "_")}',
-            python_callable=execute_sql_file,
-            op_kwargs={
-                'sql_file_name': sql_file,
-                'sql_files_path': SQL_FILES_PATH,
-                'archive_path': ARCHIVE_PATH,
-                'project_id': PROJECT_ID, # Added
-                'dataset_name': DATASET_NAME, # Added
-                'delimiter': SQL_STATEMENT_DELIMITER,
-            },
-            provide_context=True,  # Add this if you need to access Airflow context.
-        )
-        execute_tasks.append(execute_task)
+    execute_tasks = create_execution_tasks()  # Call the function *within* the DAG context
 
     # Use chain to set dependencies
     if execute_tasks:
-      chain(get_sql_files, *execute_tasks)
-
----------------------------yaml file ------------------------
-
-bigquery_project: 'your-gcp-project-id'  # Replace with your GCP project ID
-bigquery_dataset: 'your_dataset_name'  # Replace with your BigQuery dataset name
-sql_files_path: '/path/to/your/sql_files'
-archive_path: '/path/to/your/sql_archive'
-sql_statement_delimiter: ";\n"
-file_ordering:  # Optional:  Specify the order of the files.
-  - '01_create_tables.sql'
-  - '02_insert_data.sql'
-  - '03_alter_table.sql'
-  - '04_views.sql'
+        chain(get_sql_files, *execute_tasks)
