@@ -165,3 +165,16 @@ with DAG(
     # Use chain to set dependencies
     if execute_tasks:
       chain(get_sql_files, *execute_tasks)
+
+---------------------------yaml file ------------------------
+
+bigquery_project: 'your-gcp-project-id'  # Replace with your GCP project ID
+bigquery_dataset: 'your_dataset_name'  # Replace with your BigQuery dataset name
+sql_files_path: '/path/to/your/sql_files'
+archive_path: '/path/to/your/sql_archive'
+sql_statement_delimiter: ";\n"
+file_ordering:  # Optional:  Specify the order of the files.
+  - '01_create_tables.sql'
+  - '02_insert_data.sql'
+  - '03_alter_table.sql'
+  - '04_views.sql'
