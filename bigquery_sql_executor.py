@@ -137,8 +137,14 @@ with DAG(
     catchup=False,  # Do not backfill
     tags=['bigquery', 'sql', 'dynamic'],
 ) as dag:
-    def create_execution_tasks():
-        sql_files = list_and_sort_sql_files(SQL_FILES_PATH, FILE_ORDERING)
+    get_sql_files = PythonOperator(
+        task_id='get_sql_files',
+        python_callable=list_and_sort_sql_files,
+        op_kwargs={'sql_files_path': SQL_FILES_PATH, 'file_ordering': FILE_ORDERING},
+        provide_context=True,  # Add this if you need to access Airflow context.
+    )
+
+    def create_execution_tasks(sql_files): # Modified
         execute_tasks = []
         for sql_file in sql_files:
             execute_task = PythonOperator(
@@ -153,18 +159,17 @@ with DAG(
                     'delimiter': SQL_STATEMENT_DELIMITER,
                 },
                 provide_context=True,  # Add this if you need to access Airflow context.
+                dag=dag, # Add the dag to the operator
             )
             execute_tasks.append(execute_task)
         return execute_tasks
 
-    get_sql_files = PythonOperator(
-        task_id='get_sql_files',
-        python_callable=list_and_sort_sql_files,
-        op_kwargs={'sql_files_path': SQL_FILES_PATH, 'file_ordering': FILE_ORDERING},
-        provide_context=True,  # Add this if you need to access Airflow context.
-    )
-
-    execute_tasks = create_execution_tasks()  # Call the function *within* the DAG context
+    #execute_tasks = create_execution_tasks()  # Call the function *within* the DAG context # Removed
+    # Use chain to set dependencies
+    sql_file_list = list_and_sort_sql_files(SQL_FILES_PATH, FILE_ORDERING) # Added
+    if sql_file_list: # Added
+        execute_tasks = create_execution_tasks(sql_file_list) # Added
+        chain(get_sql_files, *execute_tasks)
 
     # Use chain to set dependencies
     if execute_tasks:
